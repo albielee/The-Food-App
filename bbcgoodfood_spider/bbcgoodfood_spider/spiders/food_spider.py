@@ -1,4 +1,5 @@
 import scrapy
+import json
 
 class GoodFoodSpider(scrapy.Spider):
     """
@@ -7,42 +8,68 @@ class GoodFoodSpider(scrapy.Spider):
         - Extract all recipes from bbcgoodfood
         - Save all the information to a csv or senible format.
     How:
-        - Crawl from the sitemap https://www.bbcgoodfood.com/wp-sitemap.xml
-        - Identify all the recipe links
-        - crawl through every recipe link and on each page locate all recipes
-          and extract that information
-        - Find the next page links and run over all pages of recipe lists.
-        - save all the information. The information may potentially be too large for
-          dicts so saving in batches might be necessary.
+        - sitemap bad we have a link to all recipes using the bbcgoodfood search function.
+        - https://www.bbcgoodfood.com/search/recipes/page/1?sort=-date
+        - The crawler will begin by extracting all the information of the first page and then
+          simply go to the next page and repeat.
+        - To save time when updating new recipes we could only add new recipes and ignore
+          already added ones. This doesnt apply if existing recipes have been updated.
     Why:
         - So we can get all the recipe information for our website and are able to
           periodically update the information by running the spider.
+
+    How do we want our data to look?
+    title: ...
+    url: ...
+    image_url: ...
+    cook_time: ...
+    difficulty: ...
+    vegiterian: ...
+    vegan: ...
+
+
+     
     """
 
     name = "food_spider"
 
-    start_urls = ["https://www.bbcgoodfood.com/wp-sitemap.xml"]
+    page = 1
+    start_urls = ["https://www.bbcgoodfood.com/search/recipes/page/1?sort=-date"]
             
     def parse(self, response):
-        y = {
-            'url': [],
-            'title': []
-        }
-        for meal in response.css('h4.heading-4.standard-card-new__display-title'):
-            y['url'].append(meal.css("a::attr('href')").get())
-            y['title'].append(meal.css('a::text').get())
-
-        ingredient = response.url.replace("https://www.bbcgoodfood.com/search/recipes?q=", '')
-
-        for i in range(len(y['url'])):
-            yield scrapy.Request("https://www.bbcgoodfood.com" + y['url'][i], self.parse_meal,
-                                 cb_kwargs=dict(title=y['title'][i], ingredient=ingredient))
+      
+        recipe_links = response.css("h4.heading-4.standard-card-new__display-title a::attr('href')")
+        yield from response.follow_all(recipe_links, self.parse_meal)
             
+      
+        self.page += 1
+        pagination_link = "https://www.bbcgoodfood.com/search/recipes/page/%i/?sort=-date" % self.page
+        yield scrapy.Request(pagination_link, self.parse)
 
-    def parse_meal(self, response, title, ingredient):
+    def parse_meal(self, response):
+        title = response.css("div.masthead__body h1::text").get()
         recipe = response.css("div.recipe-template__instructions li.pb-xxs.pt-xxs.list-item.list-item--separator ::text").getall()
+        tags = response.css("ul.term-icon-list.mb-xs.hidden-print.list.list--horizontal ::text").getall()
+        rating = response.css("div.rating__values span.sr-only::text").get()
+        num_of_rating = response.css("div.rating__values span.rating__count-text.body-copy-small ::text").get()
+        try:
+          prep_time = response.css("div.icon-with-text__children time::text")[0].get()
+        except IndexError:
+          prep_time = None
+
+        try:
+          cook_time = response.css("div.icon-with-text__children time::text")[1].get()
+        except IndexError:
+          cook_time = None
+
+        serves = response.css("div.icon-with-text.masthead__servings.body-copy-small.body-copy-bold.icon-with-text--aligned div.icon-with-text__children ::text").get()
         yield { "title": title,
-                "ingredient": ingredient,
                 "url": response.url,
-                "recipe": recipe
+                "recipe": recipe,
+                "rating": rating,
+                "num_of_rating": num_of_rating,
+                "tags": tags,
+                "prep_time": prep_time,
+                "cook_time": cook_time,
+                "serves": serves
         }
